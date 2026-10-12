@@ -1,0 +1,11 @@
+vivado_*/
+.Xil/
+*.jou
+*.log
+sim/cocotb/build/
+sim/cocotb/results.xml
+sim/sv/obj*/
+sim/sv/run*/
+__pycache__/
+*.vcd
+*.fst
