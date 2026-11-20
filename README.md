@@ -16,8 +16,8 @@ A real-time procedural video synthesizer with a native HDMI transmitter built fr
 | Path | Contents |
 |---|---|
 | `rtl/` | SystemVerilog design (13 files; `vs_pkg.sv` first) |
-| `constraints/` | `edge_artix7_hdmi.xdc` (template: fill in pins), VGA files for EDGE, Basys 3, Nexys A7 |
-| `scripts/` | `create_project.tcl`, `build.tcl` (with reports), `program.tcl` |
+| `constraints/` | `edge_artix7_hdmi.xdc` (EDGE pin map, tested on hardware), VGA files for EDGE, Basys 3, Nexys A7 |
+| `scripts/` | `create_project.tcl`, `build.tcl` (with reports), `program.tcl`, `stats.tcl` (extra reports), `strategies.tcl` (strategy sweep) |
 | `sim/cocotb/` | Reference models (`refmodel.py`), tests, `run.py` |
 | `sim/sv/` | Serial-level self-checking testbench and `run_serial.sh` |
 | `tools/` | `gen_tables.py`, `ppm2png.py` |
@@ -25,16 +25,31 @@ A real-time procedural video synthesizer with a native HDMI transmitter built fr
 
 ## Quick start (EDGE Artix 7, HDMI)
 
-1. Fill in every `XX` in `constraints/edge_artix7_hdmi.xdc` from the kit's pin list.
-2. Vivado Tcl console:
-   ```
-   cd C:/path/to/vidsynth
-   set argv {edge}          ;# or {edge720}, add noedid if DDC is not wired: {edge noedid}
-   source scripts/create_project.tcl
-   ```
-3. Optional: Run Behavioral Simulation; expect `HDMI SERIAL CHECK: PASS`.
-4. Generate Bitstream, then Hardware Manager, Program Device.
-5. SW1, SW3, SW4, SW6, SW15 on: rainbow plasma with sound.
+The EDGE board does not route the HDMI DDC lines to the FPGA, so build with `noedid`.
+The design then defaults to HDMI mode. The two DDC ports are parked on unused J11
+header pins (M16, N16) and stay tri-stated; leave J11 unconnected.
+
+Command line (one step: project, synthesis, implementation, bitstream, reports):
+```
+cd C:\path\to\vidsynth
+vivado -mode batch -source scripts/build.tcl -tclargs edge noedid      # 640x480
+vivado -mode batch -source scripts/build.tcl -tclargs edge720 noedid   # 1280x720
+vivado -mode batch -source scripts/program.tcl -tclargs edge720        # program over JTAG
+```
+If `vivado` is not on the PATH, give the full path to `vivado.bat`.
+
+Or in the Vivado Tcl console:
+```
+cd C:/path/to/vidsynth
+set argv {edge noedid}          ;# or {edge720 noedid}
+source scripts/create_project.tcl
+```
+then Generate Bitstream, Hardware Manager, Program Device.
+
+Optional: Run Behavioral Simulation; expect `HDMI SERIAL CHECK: PASS`.
+
+Switch numbering: `sw[n]` is the board switch labelled SW(n+3). For example `sw[1]` (plasma)
+is board SW4, and `sw[15]` (audio) is board SW18. The reset is the centre push button (SW22).
 
 ## Controls and indicators
 
@@ -68,4 +83,41 @@ cd sim/cocotb && python3 run.py          # Verilator + cocotb, all suites
 | edid | I2C slave model: HDMI TV, DVI monitor, no VSDB, bad checksum, no device, clock stretching | PASS (7 tests) |
 | Serial | Bit-level decode of the four lanes, frame compare, ECC of every packet | PASS at both resolutions |
 
-Not verified here: real hardware, Vivado timing closure, and the real MMCM/OSERDESE2 models (run step 3 above once to cover the last one).
+All suites were rerun with Verilator 5.020 and cocotb 1.9.2: 22 of 22 tests pass. Totals: 142,770 TMDS
+characters against the reference encoder; 16 frames pixel-exact against the NumPy model; 7.9 M HDMI
+characters and 5.9 M pixels through the sink parser, with every data island, InfoFrame and audio sample checked.
+
+## Hardware results
+
+Tested on the EDGE Artix 7 (XC7A35T-1FTG256) with a Dell E2422HS monitor.
+
+| | 640x480 at 60 Hz | 1280x720 at 60 Hz |
+|---|---|---|
+| Pixel clock | 25.0 MHz | 74.22 MHz |
+| TMDS rate per lane (configured) | 250 Mb/s | 742 Mb/s |
+| Setup slack (WNS) | +30.219 ns | +3.742 ns |
+| Hold slack (WHS) | +0.061 ns | +0.072 ns |
+| Slice LUTs | 1,424 (6.85%) | 1,564 (7.52%) |
+| Flip-flops | 801 (1.93%) | 805 (1.94%) |
+| Block RAM / DSP | 5 RAMB18 / 6 | 5 RAMB18 / 6 |
+| Estimated on-chip power | 0.316 W | 0.330 W |
+| Picture and audio on hardware | yes | yes (monitor reports 1280x720, 60 Hz) |
+
+Power figures are Vivado estimates with default switching activity (confidence: low). At 720p,
+0.138 W is I/O and 0.105 W is the MMCM; all logic together is under 0.01 W.
+
+720p timing across implementation strategies (`scripts/strategies.tcl`):
+
+| Strategy | WNS | WHS |
+|---|---|---|
+| Default | +3.742 ns | +0.072 ns |
+| Performance_NetDelay_high | +4.226 ns | +0.072 ns |
+| Performance_ExtraTimingOpt | +4.104 ns | +0.087 ns |
+| Performance_Explore | +4.052 ns | +0.065 ns |
+| Flow_RuntimeOptimized | +3.567 ns | +0.061 ns |
+| Area_Explore | +3.346 ns | +0.079 ns |
+
+The 720p critical path runs from `hdmi_tx` to the channel 2 disparity counter: 10 logic levels,
+9.50 ns, 63% routing. No congestion above level 5. `report_cdc` finds no unsafe crossings.
+
+Not measured: TMDS signal integrity (no eye diagram) and board power (no meter).

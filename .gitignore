@@ -9,3 +9,9 @@ sim/sv/run*/
 __pycache__/
 *.vcd
 *.fst
+stats_*/
+*.backup.*
+/util.txt
+/power.txt
+/timing.txt
+dfx_runtime.txt
